@@ -23,7 +23,6 @@ from hummingbot.client.config.config_helpers import (
     get_strategy_template_path,
     parse_config_default_to_text,
     parse_cvar_value,
-    save_previous_strategy_value,
     save_to_yml,
     save_to_yml_legacy,
 )
@@ -90,7 +89,7 @@ class CreateCommand:
             if not config_class:
                 raise InvalidController(f"No configuration class found in the module {controller_name}.")
 
-            config_class_instance = config_class.construct()
+            config_class_instance = config_class.model_construct()
             config_class_instance.id = config_class_instance.set_id(None)
             config_map = ClientConfigAdapter(config_class_instance)
 
@@ -119,7 +118,7 @@ class CreateCommand:
                                  if
                                  inspect.isclass(member) and member not in [BaseClientModel, StrategyV2ConfigBase] and
                                  (issubclass(member, BaseClientModel) or issubclass(member, StrategyV2ConfigBase))))
-            config_map = ClientConfigAdapter(config_class.construct())
+            config_map = ClientConfigAdapter(config_class.model_construct())
 
             await self.prompt_for_model_config(config_map)
             if not self.app.to_stop_config:
@@ -149,8 +148,8 @@ class CreateCommand:
             return await self.save_config(name, config_instance, config_dir_path)  # Recursive call
 
         config_path = config_dir_path / file_name
-        field_order = list(config_instance.__fields__.keys())
-        config_json_str = config_instance.json()
+        field_order = list(config_instance.model_fields.keys())
+        config_json_str = config_instance.model_dump_json(warnings=False)
         config_data = json.loads(config_json_str)
         ordered_config_data = OrderedDict((field, config_data.get(field)) for field in field_order)
 
@@ -187,9 +186,8 @@ class CreateCommand:
         if self.app.to_stop_config:
             return
 
-        save_previous_strategy_value(file_name, self.client_config_map)
         self.strategy_file_name = file_name
-        self.strategy_name = strategy
+        self.trading_core.strategy_name = strategy
         self.strategy_config_map = config_map
         # Reload completer here otherwise the new file will not appear
         self.app.input_field.completer = load_completer(self)
@@ -203,7 +201,7 @@ class CreateCommand:
         self,  # type: HummingbotApplication
     ) -> Optional[str]:
         strategy = None
-        strategy_config = ClientConfigAdapter(BaseStrategyConfigMap.construct())
+        strategy_config = ClientConfigAdapter(BaseStrategyConfigMap.model_construct())
         await self.prompt_for_model_config(strategy_config)
         if not self.app.to_stop_config:
             strategy = strategy_config.strategy
@@ -361,7 +359,7 @@ class CreateCommand:
         except asyncio.TimeoutError:
             self.notify("\nA network error prevented the connection check to complete. See logs for more details.")
             self.strategy_file_name = None
-            self.strategy_name = None
+            self.trading_core.strategy_name = None
             self.strategy_config = None
             raise
         if all_status_go:

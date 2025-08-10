@@ -9,6 +9,7 @@ import aiohttp
 from aiohttp import ContentTypeError
 
 from hummingbot.client.config.security import Security
+from hummingbot.connector.gateway.common_types import ConnectorType, get_connector_type
 from hummingbot.core.event.events import TradeType
 from hummingbot.logger import HummingbotLogger
 
@@ -265,10 +266,14 @@ class GatewayHttpClient:
         return response
 
     async def post_restart(self):
-        await self.api_request("post", "restart", fail_silently=True)
+        await self.api_request("post", "restart", fail_silently=False)
 
     async def get_connectors(self, fail_silently: bool = False) -> Dict[str, Any]:
         return await self.api_request("get", "connectors", fail_silently=fail_silently)
+
+    async def get_pools(self, connector: str) -> Dict[str, Any]:
+        self.logger().info(f"Getting pools for connector: {connector}")
+        return await self.api_request("get", f"config/pools?connector={connector}")
 
     async def get_wallets(self, fail_silently: bool = False) -> List[Dict[str, Any]]:
         return await self.api_request("get", "wallet", fail_silently=fail_silently)
@@ -290,7 +295,6 @@ class GatewayHttpClient:
             network: str,
             address: str,
             token_symbols: List[str],
-            connector: str = None,
             fail_silently: bool = False,
     ) -> Dict[str, Any]:
         if isinstance(token_symbols, list):
@@ -298,13 +302,11 @@ class GatewayHttpClient:
             request_params = {
                 "network": network,
                 "address": address,
-                "tokenSymbols": token_symbols,
+                "tokens": token_symbols,
             }
-            if connector is not None:
-                request_params["connector"] = connector
             return await self.api_request(
                 method="post",
-                path_url=f"{chain}/balances",
+                path_url=f"chains/{chain}/balances",
                 params=request_params,
                 fail_silently=fail_silently,
             )
@@ -317,7 +319,7 @@ class GatewayHttpClient:
             network: str,
             fail_silently: bool = True
     ) -> Dict[str, Any]:
-        return await self.api_request("get", f"{chain}/tokens", {
+        return await self.api_request("get", f"chains/{chain}/tokens", {
             "network": network
         }, fail_silently=fail_silently)
 
@@ -330,12 +332,11 @@ class GatewayHttpClient:
         req_data: Dict[str, str] = {}
         if chain is not None and network is not None:
             req_data["network"] = network
-            return await self.api_request("get", f"{chain}/status", req_data, fail_silently=fail_silently)
+            return await self.api_request("get", f"chains/{chain}/status", req_data, fail_silently=fail_silently)
         return await self.api_request("get", "network/status", req_data, fail_silently=fail_silently)  # Default endpoint when chain is None
 
     async def approve_token(
             self,
-            chain: str,
             network: str,
             address: str,
             token: str,
@@ -358,7 +359,7 @@ class GatewayHttpClient:
             request_payload["maxPriorityFeePerGas"] = str(max_priority_fee_per_gas)
         return await self.api_request(
             "post",
-            "ethereum/approve",
+            "chains/ethereum/approve",
             request_payload
         )
 
@@ -371,10 +372,10 @@ class GatewayHttpClient:
             spender: str,
             fail_silently: bool = False
     ) -> Dict[str, Any]:
-        return await self.api_request("post", "ethereum/allowances", {
+        return await self.api_request("post", "chains/ethereum/allowances", {
             "network": network,
             "address": address,
-            "tokenSymbols": token_symbols,
+            "tokens": token_symbols,
             "spender": spender
         }, fail_silently=fail_silently)
 
@@ -383,19 +384,13 @@ class GatewayHttpClient:
             chain: str,
             network: str,
             transaction_hash: str,
-            connector: Optional[str] = None,
-            address: Optional[str] = None,
             fail_silently: bool = False
     ) -> Dict[str, Any]:
         request = {
             "network": network,
-            "txHash": transaction_hash
+            "signature": transaction_hash
         }
-        # if connector:
-        #     request["connector"] = connector
-        # if address:
-        #     request["address"] = address
-        return await self.api_request("post", f"{chain}/poll", request, fail_silently=fail_silently)
+        return await self.api_request("post", f"chains/{chain}/poll", request, fail_silently=fail_silently)
 
     async def wallet_sign(
         self,
@@ -419,7 +414,7 @@ class GatewayHttpClient:
             address: str,
             fail_silently: bool = False
     ) -> Dict[str, Any]:
-        return await self.api_request("post", "ethereum/nextNonce", {
+        return await self.api_request("post", "chains/ethereum/nextNonce", {
             "network": network,
             "address": address
         }, fail_silently=fail_silently)
@@ -431,11 +426,47 @@ class GatewayHttpClient:
             address: str,
             nonce: int
     ) -> Dict[str, Any]:
-        return await self.api_request("post", "ethereum/cancel", {
+        return await self.api_request("post", "chains/ethereum/cancel", {
             "network": network,
             "address": address,
             "nonce": nonce
         })
+
+    async def quote_swap(
+            self,
+            network: str,
+            connector: str,
+            base_asset: str,
+            quote_asset: str,
+            amount: Decimal,
+            side: TradeType,
+            slippage_pct: Optional[Decimal] = None,
+            pool_address: Optional[str] = None,
+            fail_silently: bool = False,
+    ) -> Dict[str, Any]:
+        if side not in [TradeType.BUY, TradeType.SELL]:
+            raise ValueError("Only BUY and SELL prices are supported.")
+
+        connector_type = get_connector_type(connector)
+
+        request_payload = {
+            "network": network,
+            "baseToken": base_asset,
+            "quoteToken": quote_asset,
+            "amount": float(amount),
+            "side": side.name
+        }
+        if slippage_pct is not None:
+            request_payload["slippagePct"] = float(slippage_pct)
+        if connector_type in (ConnectorType.CLMM, ConnectorType.AMM) and pool_address is not None:
+            request_payload["poolAddress"] = pool_address
+
+        return await self.api_request(
+            "get",
+            f"connectors/{connector}/quote-swap",
+            request_payload,
+            fail_silently=fail_silently
+        )
 
     async def get_price(
             self,
@@ -447,35 +478,32 @@ class GatewayHttpClient:
             amount: Decimal,
             side: TradeType,
             fail_silently: bool = False,
-            pool_id: Optional[str] = None
+            pool_address: Optional[str] = None
     ) -> Dict[str, Any]:
-        if side not in [TradeType.BUY, TradeType.SELL]:
-            raise ValueError("Only BUY and SELL prices are supported.")
+        """
+        Wrapper for quote_swap
+        """
+        try:
+            response = await self.quote_swap(
+                network=network,
+                connector=connector,
+                base_asset=base_asset,
+                quote_asset=quote_asset,
+                amount=amount,
+                side=side,
+                pool_address=pool_address
+            )
+            return response
+        except Exception as e:
+            if not fail_silently:
+                raise
+            return {
+                "price": None,
+                "error": str(e)
+            }
 
-        request_payload = {
-            "chain": chain,
-            "network": network,
-            "connector": connector,
-            "base": base_asset,
-            "quote": quote_asset,
-            "amount": f"{amount:.18f}",
-            "side": side.name,
-            "allowedSlippage": "0/1",  # hummingbot applies slippage itself
-        }
-
-        if pool_id not in ["", None]:
-            request_payload["poolId"] = pool_id
-
-        return await self.api_request(
-            "post",
-            f"{connector}/price",
-            request_payload,
-            fail_silently=fail_silently,
-        )
-
-    async def amm_trade(
+    async def execute_swap(
         self,
-        chain: str,
         network: str,
         connector: str,
         address: str,
@@ -483,42 +511,272 @@ class GatewayHttpClient:
         quote_asset: str,
         side: TradeType,
         amount: Decimal,
-        price: Decimal,
+        slippage_pct: Optional[Decimal] = None,
+        pool_address: Optional[str] = None,
+        # limit_price: Optional[Decimal] = None,
         nonce: Optional[int] = None,
-        max_fee_per_gas: Optional[int] = None,
-        max_priority_fee_per_gas: Optional[int] = None,
-        pool_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if side not in [TradeType.BUY, TradeType.SELL]:
+            raise ValueError("Only BUY and SELL prices are supported.")
+
+        connector_type = get_connector_type(connector)
+
         request_payload: Dict[str, Any] = {
-            "chain": chain,
             "network": network,
-            "connector": connector,
-            "address": address,
-            "base": base_asset,
-            "quote": quote_asset,
+            "walletAddress": address,
+            "baseToken": base_asset,
+            "quoteToken": quote_asset,
+            "amount": float(amount),
             "side": side.name,
-            "amount": f"{amount:.18f}",
-            # "limitPrice": f"{price:.20f}",
-            # "allowedSlippage": "0/1",  # hummingbot applies slippage itself
         }
-        if pool_id not in ["", None]:
-            request_payload["poolId"] = pool_id
+        if slippage_pct is not None:
+            request_payload["slippagePct"] = float(slippage_pct)
+        # if limit_price is not None:
+        #     request_payload["limitPrice"] = float(limit_price)
         if nonce is not None:
             request_payload["nonce"] = int(nonce)
-        if max_fee_per_gas is not None:
-            request_payload["maxFeePerGas"] = str(max_fee_per_gas)
-        if max_priority_fee_per_gas is not None:
-            request_payload["maxPriorityFeePerGas"] = str(max_priority_fee_per_gas)
-        return await self.api_request("post", f"{connector}/trade", request_payload)
+        if connector_type in (ConnectorType.CLMM, ConnectorType.AMM) and pool_address is not None:
+            request_payload["poolAddress"] = pool_address
+        return await self.api_request(
+            "post",
+            f"connectors/{connector}/execute-swap",
+            request_payload
+        )
 
-    async def amm_estimate_gas(
+    async def estimate_gas(
             self,
             chain: str,
             network: str,
-            connector: str,
+            gas_limit: Optional[int] = None,
     ) -> Dict[str, Any]:
-        return await self.api_request("post", f"{connector}/estimateGas", {
+        return await self.api_request("post", f"chains/{chain}/estimate-gas", {
             "chain": chain,
             "network": network,
-            "connector": connector,
+            "gasLimit": gas_limit
         })
+
+    async def pool_info(
+            self,
+            connector: str,
+            network: str,
+            pool_address: Optional[str] = None,
+            base_token: Optional[str] = None,
+            quote_token: Optional[str] = None,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Gets information about a AMM or CLMM pool
+        Either pool_address or both base_token and quote_token must be provided
+        """
+        query_params = {
+            "network": network,
+        }
+        if pool_address is not None:
+            query_params["poolAddress"] = pool_address
+        if base_token is not None:
+            query_params["baseToken"] = base_token
+        if quote_token is not None:
+            query_params["quoteToken"] = quote_token
+
+        return await self.api_request(
+            "get",
+            f"connectors/{connector}/pool-info",
+            params=query_params,
+            fail_silently=fail_silently,
+        )
+
+    async def clmm_position_info(
+            self,
+            connector: str,
+            network: str,
+            position_address: str,
+            wallet_address: str,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Gets information about a concentrated liquidity position
+        """
+        query_params = {
+            "network": network,
+            "positionAddress": position_address,
+            "walletAddress": wallet_address,
+        }
+        return await self.api_request(
+            "get",
+            f"connectors/{connector}/position-info",
+            params=query_params,
+            fail_silently=fail_silently,
+        )
+
+    async def amm_position_info(
+            self,
+            connector: str,
+            network: str,
+            wallet_address: str,
+            pool_address: Optional[str] = None,
+            base_token: Optional[str] = None,
+            quote_token: Optional[str] = None,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Gets information about a AMM liquidity position
+        Either pool_address or both base_token and quote_token must be provided
+        """
+        query_params = {
+            "network": network,
+            "walletAddress": wallet_address,
+        }
+        if pool_address is not None:
+            query_params["poolAddress"] = pool_address
+        if base_token is not None:
+            query_params["baseToken"] = base_token
+        if quote_token is not None:
+            query_params["quoteToken"] = quote_token
+
+        return await self.api_request(
+            "get",
+            f"connectors/{connector}/position-info",
+            params=query_params,
+            fail_silently=fail_silently,
+        )
+
+    async def clmm_open_position(
+            self,
+            connector: str,
+            network: str,
+            wallet_address: str,
+            lower_price: float,
+            upper_price: float,
+            base_token_amount: Optional[float] = None,
+            quote_token_amount: Optional[float] = None,
+            slippage_pct: Optional[float] = None,
+            pool_address: Optional[str] = None,
+            base_token: Optional[str] = None,
+            quote_token: Optional[str] = None,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Opens a new concentrated liquidity position
+        Either pool_address or both base_token and quote_token must be provided
+        """
+        request_payload = {
+            "network": network,
+            "walletAddress": wallet_address,
+            "lowerPrice": lower_price,
+            "upperPrice": upper_price,
+        }
+        if base_token_amount is not None:
+            request_payload["baseTokenAmount"] = base_token_amount
+        if quote_token_amount is not None:
+            request_payload["quoteTokenAmount"] = quote_token_amount
+        if slippage_pct is not None:
+            request_payload["slippagePct"] = slippage_pct
+        if pool_address is not None:
+            request_payload["poolAddress"] = pool_address
+        if base_token is not None:
+            request_payload["baseToken"] = base_token
+        if quote_token is not None:
+            request_payload["quoteToken"] = quote_token
+
+        return await self.api_request(
+            "post",
+            f"connectors/{connector}/open-position",
+            request_payload,
+            fail_silently=fail_silently,
+        )
+
+    async def clmm_close_position(
+            self,
+            connector: str,
+            network: str,
+            wallet_address: str,
+            position_address: str,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Closes an existing concentrated liquidity position
+        """
+        request_payload = {
+            "network": network,
+            "walletAddress": wallet_address,
+            "positionAddress": position_address,
+        }
+        return await self.api_request(
+            "post",
+            f"connectors/{connector}/close-position",
+            request_payload,
+            fail_silently=fail_silently,
+        )
+
+    async def amm_add_liquidity(
+            self,
+            connector: str,
+            network: str,
+            wallet_address: str,
+            base_token_amount: float,
+            quote_token_amount: float,
+            slippage_pct: Optional[float] = None,
+            pool_address: Optional[str] = None,
+            base_token: Optional[str] = None,
+            quote_token: Optional[str] = None,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Add liquidity to an AMM liquidity position
+        Either pool_address or both base_token and quote_token must be provided
+        """
+        request_payload = {
+            "network": network,
+            "walletAddress": wallet_address,
+            "baseTokenAmount": base_token_amount,
+            "quoteTokenAmount": quote_token_amount,
+        }
+        if slippage_pct is not None:
+            request_payload["slippagePct"] = slippage_pct
+        if pool_address is not None:
+            request_payload["poolAddress"] = pool_address
+        if base_token is not None:
+            request_payload["baseToken"] = base_token
+        if quote_token is not None:
+            request_payload["quoteToken"] = quote_token
+
+        return await self.api_request(
+            "post",
+            f"connectors/{connector}/add-liquidity",
+            request_payload,
+            fail_silently=fail_silently,
+        )
+
+    async def amm_remove_liquidity(
+            self,
+            connector: str,
+            network: str,
+            wallet_address: str,
+            percentage: float,
+            pool_address: Optional[str] = None,
+            base_token: Optional[str] = None,
+            quote_token: Optional[str] = None,
+            fail_silently: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Closes an existing AMM liquidity position
+        Either pool_address or both base_token and quote_token must be provided
+        """
+        request_payload = {
+            "network": network,
+            "walletAddress": wallet_address,
+            "percentageToRemove": percentage,
+        }
+        if pool_address is not None:
+            request_payload["poolAddress"] = pool_address
+        if base_token is not None:
+            request_payload["baseToken"] = base_token
+        if quote_token is not None:
+            request_payload["quoteToken"] = quote_token
+
+        return await self.api_request(
+            "post",
+            f"connectors/{connector}/remove-liquidity",
+            request_payload,
+            fail_silently=fail_silently,
+        )

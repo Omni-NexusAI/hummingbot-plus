@@ -1,9 +1,10 @@
 from decimal import Decimal
-from typing import Dict, List, Set
+from typing import List
 
 import pandas as pd
 
 from hummingbot.client.ui.interface_utils import format_df_for_printout
+from hummingbot.core.data_type.common import MarketDict
 from hummingbot.data_feed.candles_feed.data_types import CandlesConfig
 from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, ControllerConfigBase
 from hummingbot.strategy_v2.executors.arbitrage_executor.data_types import ArbitrageExecutorConfig
@@ -16,17 +17,15 @@ class ArbitrageControllerConfig(ControllerConfigBase):
     controller_name: str = "arbitrage_controller"
     candles_config: List[CandlesConfig] = []
     exchange_pair_1: ConnectorPair = ConnectorPair(connector_name="binance", trading_pair="PENGU-USDT")
-    exchange_pair_2: ConnectorPair = ConnectorPair(connector_name="solana_jupiter_mainnet-beta", trading_pair="PENGU-USDC")
+    exchange_pair_2: ConnectorPair = ConnectorPair(connector_name="jupiter_solana_mainnet-beta", trading_pair="PENGU-USDC")
     min_profitability: Decimal = Decimal("0.01")
     delay_between_executors: int = 10  # in seconds
     max_executors_imbalance: int = 1
     rate_connector: str = "binance"
     quote_conversion_asset: str = "USDT"
 
-    def update_markets(self, markets: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
-        markets = {self.exchange_pair_1.connector_name: {self.exchange_pair_1.trading_pair},
-                   self.exchange_pair_2.connector_name: {self.exchange_pair_2.trading_pair}}
-        return markets
+    def update_markets(self, markets: MarketDict) -> MarketDict:
+        return [markets.add_or_update(cp.connector_name, cp.trading_pair) for cp in [self.exchange_pair_1, self.exchange_pair_2]][-1]
 
 
 class ArbitrageController(ControllerBase):

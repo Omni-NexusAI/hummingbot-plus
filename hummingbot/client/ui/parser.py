@@ -1,5 +1,5 @@
 import argparse
-from typing import TYPE_CHECKING, Any, List
+from typing import TYPE_CHECKING, List
 
 from hummingbot.client.command.connect_command import OPTIONS as CONNECT_OPTIONS
 from hummingbot.exceptions import ArgumentParserError
@@ -37,7 +37,7 @@ class ThrowingArgumentParser(argparse.ArgumentParser):
         return filtered
 
 
-def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> [ThrowingArgumentParser, Any]:
+def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> ThrowingArgumentParser:
     parser = ThrowingArgumentParser(prog="", add_help=False)
     subparsers = parser.add_subparsers()
 
@@ -92,12 +92,16 @@ def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> [ThrowingA
                                 dest="precision", help="Level of precions for values displayed")
     history_parser.set_defaults(func=hummingbot.history)
 
-    gateway_parser = subparsers.add_parser("gateway", help="Helper comands for Gateway server.")
+    gateway_parser = subparsers.add_parser("gateway", help="Helper commands for Gateway server.")
     gateway_subparsers = gateway_parser.add_subparsers()
 
     gateway_balance_parser = gateway_subparsers.add_parser("balance", help="Display your asset balances and allowances across all connected gateway connectors")
     gateway_balance_parser.add_argument("connector_chain_network", nargs="?", default=None, help="Name of connector_chain_network balance and allowance you want to fetch")
     gateway_balance_parser.set_defaults(func=hummingbot.gateway_balance)
+
+    gateway_allowance_parser = gateway_subparsers.add_parser("allowance", help="Check token allowances for Ethereum-based connectors")
+    gateway_allowance_parser.add_argument("connector_chain_network", nargs="?", default=None, help="Name of Ethereum-based connector you want to check allowances for")
+    gateway_allowance_parser.set_defaults(func=hummingbot.gateway_allowance)
 
     gateway_config_parser = gateway_subparsers.add_parser("config", help="View or update gateway configuration")
     gateway_config_parser.add_argument("key", nargs="?", default=None, help="Name of the parameter you want to view/change")
@@ -142,10 +146,6 @@ def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> [ThrowingA
     ticker_parser.add_argument("--market", type=str, dest="market", help="The market (trading pair) of the order book")
     ticker_parser.set_defaults(func=hummingbot.ticker)
 
-    previous_strategy_parser = subparsers.add_parser("previous", help="Imports the last strategy used")
-    previous_strategy_parser.add_argument("option", nargs="?", choices=["Yes,No"], default=None)
-    previous_strategy_parser.set_defaults(func=hummingbot.previous_strategy)
-
     mqtt_parser = subparsers.add_parser("mqtt", help="Manage MQTT Bridge to Message brokers")
     mqtt_subparsers = mqtt_parser.add_subparsers()
     mqtt_start_parser = mqtt_subparsers.add_parser("start", help="Start the MQTT Bridge")
@@ -170,16 +170,6 @@ def load_parser(hummingbot: "HummingbotApplication", command_tabs) -> [ThrowingA
         help="Bridge connection timeout"
     )
     mqtt_restart_parser.set_defaults(func=hummingbot.mqtt_restart)
-
-    # add shortcuts so they appear in command help
-    shortcuts = hummingbot.client_config_map.command_shortcuts
-    for shortcut in shortcuts:
-        help_str = shortcut.help
-        command = shortcut.command
-        shortcut_parser = subparsers.add_parser(command, help=help_str)
-        args = shortcut.arguments
-        for i in range(len(args)):
-            shortcut_parser.add_argument(f'${i+1}', help=args[i])
 
     rate_parser = subparsers.add_parser('rate', help="Show rate of a given trading pair")
     rate_parser.add_argument("-p", "--pair", default=None,
